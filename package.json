@@ -1,0 +1,41 @@
+{
+  "name": "zwift-telemetry",
+  "version": "0.1.0",
+  "description": "Save Zwift telemetry captured from UDP packets to a mysql database",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wiedmann/zwift-telemetry.git"
+  },
+  "author": "Christian Wiedmann",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/wiedmann/zwift-telemetry/issues"
+  },
+  "homepage": "https://github.com/wiedmann/zwift-telemetry#readme",
+  "dependencies": {
+    "cap": "^0.1.2",
+    "commander": "^2.9.0",
+    "long": "^3.2.0",
+    "mysql": "^2.13.0"
+  },
+  "nexe": {
+    "input": "./bin/nexe",
+    "output": "nexe^$",
+    "temp": "src",
+    "browserify": {
+      "requires": [],
+      "excludes": [],
+      "paths": []
+    },
+    "runtime": {
+      "framework": "node",
+      "version": "6.1.0",
+      "js-flags": "--use_strict",
+      "ignoreFlags": true
+    }
+  }
+}
