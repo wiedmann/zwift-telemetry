@@ -1,13 +1,11 @@
 const PlayerStateWriter = require('./src/playerStateWriter')
+const ZwiftPacketMonitor = require('./src/ZwiftPacketMonitor')
 const mysql = require('mysql')
 const program = require('commander')
 const Cap = require('cap').Cap, decoders=require('cap').decoders, PROTOCOL=decoders.PROTOCOL
 const ZwiftAccount = require('zwift-mobile-api')
-const zwiftProtoRoot = ZwiftAccount.getZwiftProtocolRoot()
-const clientToServerPacket = zwiftProtoRoot.lookup('ClientToServer')
-const serverToClientPacket = zwiftProtoRoot.lookup('ServerToClient')
 const Long = require('long')
-const buffer = new Buffer(65535)
+const {wrappedStatus} = require('zwift-mobile-api/src/riderStatus')
 let playerStateWriter = null
 let worldTimeOffset = 0
 
@@ -55,46 +53,23 @@ let lastStatTime = new Date()
 let startTime = lastStatTime
 let totalNumPlayerStates = 0
 let numPlayerStates = 0
+let zpm = null
 
-function processPacket(nbytes, trunc) {
-  if (linkType === 'ETHERNET') {
-    let ret = decoders.Ethernet(buffer)
-
-    if (ret.info.type === PROTOCOL.ETHERNET.IPV4) {
-      ret = decoders.IPV4(buffer, ret.offset)
-      if (ret.info.protocol === PROTOCOL.IP.UDP) {
-        ret = decoders.UDP(buffer, ret.offset)
-        try {
-          if (ret.info.srcport === 3022) {
-            let packet = serverToClientPacket.decode(buffer.slice(ret.offset, ret.offset + ret.info.length))
-            for (player_state of packet.player_states) {
-              if (playerStateWriter) {
-                playerStateWriter.addPlayerState(ZwiftAccount.wrappedStatus(player_state))
-                numPlayerStates++
-              }
-            }
-            if (packet.num_msgs == packet.msgnum) {
-              playerStateWriter.flush()
-            }
-            if (packet.world_time.greaterThanOrEqual(lastPurgeTime.add(1000))) {
-              playerStateWriter.purge(packet.world_time.add(worldTimeOffset).add(-10000))
-            }
-            let now = new Date()
-            if (now - lastStatTime >= 10000) {
-              totalNumPlayerStates += numPlayerStates
-              console.log(`${(now - startTime) / 1000}s: ${totalNumPlayerStates} total updates ${totalNumPlayerStates * 1000 / (now - startTime)}/s`
-                + ` ${(now - lastStatTime) / 1000}s elapsed since last ${numPlayerStates} updates ${numPlayerStates * 1000 / (now - lastStatTime)}/s`)
-              numPlayerStates = 0
-              lastStatTime = now
-            }
-          } else if (ret.info.dstport === 3022) {
-            let packet = clientToServerPacket.decode(buffer.slice(ret.offset, ret.offset + ret.info.length - 4))
-          }
-        } catch (ex) {
-          console.log(ex)
-        }
-      }
-    }
+function processPlayerState (playerState, serverWorldTime) {
+  if (playerStateWriter) {
+    playerStateWriter.addPlayerState(wrappedStatus(playerState))
+    numPlayerStates++
+  }
+  if (serverWorldTime.greaterThanOrEqual(lastPurgeTime.add(1000))) {
+    playerStateWriter.purge(serverWorldTime.add(worldTimeOffset).add(-10000))
+  }
+  let now = new Date()
+  if (now - lastStatTime >= 10000) {
+    totalNumPlayerStates += numPlayerStates
+    console.log(`${(now - startTime) / 1000}s: ${totalNumPlayerStates} total updates ${totalNumPlayerStates * 1000 / (now - startTime)}/s`
+      + ` ${(now - lastStatTime) / 1000}s elapsed since last ${numPlayerStates} updates ${numPlayerStates * 1000 / (now - lastStatTime)}/s`)
+    numPlayerStates = 0
+    lastStatTime = now
   }
 }
 
@@ -110,15 +85,14 @@ if (program.list_interfaces) {
   return
 }
 
-const c = new Cap()
-const linkType = c.open(program.interface, filter='port 3022', 10 * 1024 * 1024, buffer)
-c.setMinBytes && c.setMinBytes(0)
-
 connection.connect()
 riders = account.getWorld().riders().then(riders => {
   worldTimeOffset = (Number(riders.currentDateTime) * 1000) - Number(riders.currentWorldTime)
   playerStateWriter = new PlayerStateWriter(connection, worldTimeOffset)
-  c.on('packet', processPacket)
+  zpm = new ZwiftPacketMonitor(program.interface)
+  zpm.on('incomingPlayerState', processPlayerState)
+  zpm.on('endOfBatch', () => {playerStateWriter.flush()})
+  zpm.start()
   console.log('Monitoring network traffic.')
 }).catch(error => {
   console.log(error)
